@@ -25,6 +25,12 @@ logger = logging.getLogger(__name__)
 # In-memory cache for user ID → display name (bounded to avoid unbounded growth)
 _SENDER_CACHE_MAX_SIZE = 256
 _sender_name_cache: Dict[str, str] = {}
+# Cache for space resource name (spaces/<id>) → rendered display name.
+_SPACE_NAME_CACHE_MAX_SIZE = 256
+_space_name_cache: Dict[str, str] = {}
+# Cache the authenticated caller's directory user-id (users/<id>) so we can
+# exclude them from DM/group member rendering. Keyed by impersonated email.
+_self_user_id_cache: Dict[str, str] = {}
 _SEARCH_MESSAGES_MAX_CONCURRENT_SPACE_FETCHES = 1
 _SEARCH_MESSAGES_SSL_RETRIES = 3
 _SEARCH_MESSAGES_RETRY_BASE_DELAY_SECONDS = 1
@@ -37,6 +43,121 @@ def _cache_sender(user_id: str, name: str) -> None:
         for k in to_remove:
             del _sender_name_cache[k]
     _sender_name_cache[user_id] = name
+
+
+def _cache_space_name(space_id: str, name: str) -> None:
+    """Store a resolved space display name, evicting oldest entries if cache is full."""
+    if len(_space_name_cache) >= _SPACE_NAME_CACHE_MAX_SIZE:
+        to_remove = list(_space_name_cache.keys())[: _SPACE_NAME_CACHE_MAX_SIZE // 2]
+        for k in to_remove:
+            del _space_name_cache[k]
+    _space_name_cache[space_id] = name
+
+
+async def _get_self_user_id(people_service, viewer_email: str) -> Optional[str]:
+    """Return the impersonated caller's directory user-id as ``users/<id>``.
+
+    Looked up via People API ``people/me`` and cached per-process by viewer email.
+    Returns ``None`` if the lookup fails (e.g., scope or API issue) — callers
+    should treat ``None`` as "self-exclusion unavailable" and render all members.
+    """
+    cached = _self_user_id_cache.get(viewer_email)
+    if cached:
+        return cached
+    if not people_service:
+        return None
+    try:
+        me = await asyncio.to_thread(
+            people_service.people()
+            .get(resourceName="people/me", personFields="metadata")
+            .execute
+        )
+        resource_name = me.get("resourceName", "")  # e.g. "people/123456789"
+        if resource_name.startswith("people/"):
+            user_id = "users/" + resource_name.split("/", 1)[1]
+            _self_user_id_cache[viewer_email] = user_id
+            return user_id
+    except HttpError as e:
+        logger.warning(f"people/me lookup failed for {viewer_email}: {e}")
+    except Exception as e:
+        logger.warning(f"Unexpected error resolving people/me for {viewer_email}: {e}")
+    return None
+
+
+async def _resolve_space_name(
+    chat_service,
+    people_service,
+    space: dict,
+    viewer_email: str,
+) -> str:
+    """Resolve a Chat space to a human-readable name.
+
+    - Named spaces (rooms) → ``displayName`` from the Space resource.
+    - Direct messages and unnamed group chats → list members and render with
+      resolved sender names, excluding the viewer themselves.
+
+    Falls back gracefully (no exception, no scope-tightening) when the
+    memberships API is unavailable so list_spaces / get_messages still return.
+    """
+    space_id = space.get("name", "")
+    display_name = space.get("displayName", "")
+    if display_name:
+        return display_name
+    if space_id and space_id in _space_name_cache:
+        return _space_name_cache[space_id]
+
+    space_type = space.get("spaceType", "")
+    if space_type not in {"DIRECT_MESSAGE", "GROUP_CHAT"}:
+        return display_name or "Unnamed Space"
+
+    if not space_id:
+        return "Unnamed Space"
+
+    self_user_id = await _get_self_user_id(people_service, viewer_email)
+
+    try:
+        members_resp = await asyncio.to_thread(
+            chat_service.spaces()
+            .members()
+            .list(parent=space_id, pageSize=50)
+            .execute
+        )
+    except HttpError as e:
+        logger.warning(f"members.list failed for {space_id}: {e}")
+        rendered = "Unnamed Space"
+        _cache_space_name(space_id, rendered)
+        return rendered
+    except Exception as e:
+        logger.warning(f"Unexpected error listing members of {space_id}: {e}")
+        return "Unnamed Space"
+
+    members = members_resp.get("memberships", [])
+    other_names: List[str] = []
+    for m in members:
+        member_obj = m.get("member", {})
+        member_user = member_obj.get("name", "")  # "users/<id>"
+        if not member_user:
+            continue
+        if self_user_id and member_user == self_user_id:
+            continue
+        # Reuse sender resolver for consistency
+        name = await _resolve_sender(people_service, {"name": member_user})
+        if name and name != member_user:
+            other_names.append(name)
+        else:
+            other_names.append(member_user)
+
+    if not other_names:
+        rendered = "Unnamed Space"
+    elif space_type == "DIRECT_MESSAGE" and len(other_names) == 1:
+        rendered = f"DM with {other_names[0]}"
+    elif space_type == "DIRECT_MESSAGE":
+        rendered = f"DM: {', '.join(other_names)}"
+    else:  # GROUP_CHAT
+        rendered = f"Group: {', '.join(other_names)}"
+
+    _cache_space_name(space_id, rendered)
+    return rendered
 
 
 async def _resolve_sender(people_service, sender_obj: dict) -> str:
@@ -144,10 +265,20 @@ def _extract_rich_links(msg: dict) -> List[str]:
         openWorldHint=True,
     ),
 )
-@require_google_service("chat", "chat_spaces_readonly")
+@require_multiple_services(
+    [
+        {"service_type": "chat", "scopes": ["chat_spaces_readonly", "chat_memberships_readonly"], "param_name": "chat_service"},
+        {
+            "service_type": "people",
+            "scopes": ["contacts_read", "directory_read"],
+            "param_name": "people_service",
+        },
+    ]
+)
 @handle_http_errors("list_spaces", service_type="chat")
 async def list_spaces(
-    service,
+    chat_service,
+    people_service,
     user_google_email: str,
     page_size: int = 100,
     space_type: str = "all",  # "all", "room", "dm"
@@ -171,7 +302,7 @@ async def list_spaces(
     if filter_param:
         request_params["filter"] = filter_param
 
-    response = await asyncio.to_thread(service.spaces().list(**request_params).execute)
+    response = await asyncio.to_thread(chat_service.spaces().list(**request_params).execute)
 
     spaces = response.get("spaces", [])
     if not spaces:
@@ -179,7 +310,9 @@ async def list_spaces(
 
     output = [f"Found {len(spaces)} Chat spaces (type: {space_type}):"]
     for space in spaces:
-        space_name = space.get("displayName", "Unnamed Space")
+        space_name = await _resolve_space_name(
+            chat_service, people_service, space, user_google_email
+        )
         space_id = space.get("name", "")
         space_type_actual = space.get("spaceType", "UNKNOWN")
         output.append(f"- {space_name} (ID: {space_id}, Type: {space_type_actual})")
@@ -198,7 +331,7 @@ async def list_spaces(
 )
 @require_multiple_services(
     [
-        {"service_type": "chat", "scopes": ["chat_read", "chat_spaces_readonly"], "param_name": "chat_service"},
+        {"service_type": "chat", "scopes": ["chat_read", "chat_spaces_readonly", "chat_memberships_readonly"], "param_name": "chat_service"},
         {
             "service_type": "people",
             "scopes": ["contacts_read", "directory_read"],
@@ -236,7 +369,9 @@ async def get_messages(
     space_info = await asyncio.to_thread(
         chat_service.spaces().get(name=space_id).execute
     )
-    space_name = space_info.get("displayName", "Unknown Space")
+    space_name = await _resolve_space_name(
+        chat_service, people_service, space_info, user_google_email
+    )
 
     # Get messages
     list_params = {"parent": space_id, "pageSize": page_size, "orderBy": order_by}
@@ -379,7 +514,7 @@ async def send_message(
 )
 @require_multiple_services(
     [
-        {"service_type": "chat", "scopes": ["chat_read", "chat_spaces_readonly"], "param_name": "chat_service"},
+        {"service_type": "chat", "scopes": ["chat_read", "chat_spaces_readonly", "chat_memberships_readonly"], "param_name": "chat_service"},
         {
             "service_type": "people",
             "scopes": ["contacts_read", "directory_read"],
@@ -469,7 +604,9 @@ async def search_messages(
                     semaphore=fetch_semaphore,
                 )
                 msgs = response.get("messages", [])
-                display = space.get("displayName", "Unknown")
+                display = await _resolve_space_name(
+                    chat_service, people_service, space, user_google_email
+                )
                 for msg in msgs:
                     msg["_space_name"] = display
                 return msgs, False
