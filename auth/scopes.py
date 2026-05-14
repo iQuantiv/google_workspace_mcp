@@ -71,6 +71,10 @@ CONTACTS_READONLY_SCOPE = "https://www.googleapis.com/auth/contacts.readonly"
 # in-org user IDs (e.g., Chat senders) to display names via People API.
 DIRECTORY_READONLY_SCOPE = "https://www.googleapis.com/auth/directory.readonly"
 
+# OpenID-style profile scope — required for People API people/me lookups so the
+# caller can identify themselves (used for self-exclusion in DM rendering).
+USERINFO_PROFILE_SCOPE = "https://www.googleapis.com/auth/userinfo.profile"
+
 # Google Custom Search API scope
 CUSTOM_SEARCH_SCOPE = "https://www.googleapis.com/auth/cse"
 
@@ -226,7 +230,7 @@ TOOL_READONLY_SCOPES_MAP = {
     "forms": [FORMS_BODY_READONLY_SCOPE, FORMS_RESPONSES_READONLY_SCOPE],
     "slides": [SLIDES_READONLY_SCOPE],
     "tasks": [TASKS_READONLY_SCOPE],
-    "contacts": [CONTACTS_READONLY_SCOPE, DIRECTORY_READONLY_SCOPE],
+    "contacts": [CONTACTS_READONLY_SCOPE, DIRECTORY_READONLY_SCOPE, USERINFO_PROFILE_SCOPE],
     "search": CUSTOM_SEARCH_SCOPES,
     "appscript": [
         SCRIPT_PROJECTS_READONLY_SCOPE,

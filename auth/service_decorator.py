@@ -58,6 +58,7 @@ from auth.scopes import (
     CONTACTS_SCOPE,
     CONTACTS_READONLY_SCOPE,
     DIRECTORY_READONLY_SCOPE,
+    USERINFO_PROFILE_SCOPE,
     CHAT_MEMBERSHIPS_READONLY_SCOPE,
     CUSTOM_SEARCH_SCOPE,
     SCRIPT_PROJECTS_SCOPE,
@@ -577,6 +578,8 @@ SCOPE_GROUPS = {
     "contacts_read": CONTACTS_READONLY_SCOPE,
     # Workspace Directory scope — needed to resolve in-org user IDs via People API
     "directory_read": DIRECTORY_READONLY_SCOPE,
+    # OpenID profile scope — needed for People API people/me self-identity lookups
+    "userinfo_profile": USERINFO_PROFILE_SCOPE,
     # Custom Search scope
     "customsearch": CUSTOM_SEARCH_SCOPE,
     # Apps Script scopes

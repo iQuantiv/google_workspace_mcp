@@ -270,7 +270,7 @@ def _extract_rich_links(msg: dict) -> List[str]:
         {"service_type": "chat", "scopes": ["chat_spaces_readonly", "chat_memberships_readonly"], "param_name": "chat_service"},
         {
             "service_type": "people",
-            "scopes": ["contacts_read", "directory_read"],
+            "scopes": ["contacts_read", "directory_read", "userinfo_profile"],
             "param_name": "people_service",
         },
     ]
@@ -334,7 +334,7 @@ async def list_spaces(
         {"service_type": "chat", "scopes": ["chat_read", "chat_spaces_readonly", "chat_memberships_readonly"], "param_name": "chat_service"},
         {
             "service_type": "people",
-            "scopes": ["contacts_read", "directory_read"],
+            "scopes": ["contacts_read", "directory_read", "userinfo_profile"],
             "param_name": "people_service",
         },
     ]
@@ -517,7 +517,7 @@ async def send_message(
         {"service_type": "chat", "scopes": ["chat_read", "chat_spaces_readonly", "chat_memberships_readonly"], "param_name": "chat_service"},
         {
             "service_type": "people",
-            "scopes": ["contacts_read", "directory_read"],
+            "scopes": ["contacts_read", "directory_read", "userinfo_profile"],
             "param_name": "people_service",
         },
     ]
