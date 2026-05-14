@@ -80,9 +80,9 @@ async def _resolve_sender(people_service, sender_obj: dict) -> str:
                 _cache_sender(user_id, resolved)
                 return resolved
         except HttpError as e:
-            logger.debug(f"People API lookup failed for {user_id}: {e}")
+            logger.warning(f"People API lookup failed for {user_id}: {e}")
         except Exception as e:
-            logger.debug(f"Unexpected error resolving {user_id}: {e}")
+            logger.warning(f"Unexpected error resolving {user_id}: {e}")
 
     # Final fallback
     _cache_sender(user_id, user_id)
@@ -201,7 +201,7 @@ async def list_spaces(
         {"service_type": "chat", "scopes": ["chat_read", "chat_spaces_readonly"], "param_name": "chat_service"},
         {
             "service_type": "people",
-            "scopes": "contacts_read",
+            "scopes": ["contacts_read", "directory_read"],
             "param_name": "people_service",
         },
     ]
@@ -382,7 +382,7 @@ async def send_message(
         {"service_type": "chat", "scopes": ["chat_read", "chat_spaces_readonly"], "param_name": "chat_service"},
         {
             "service_type": "people",
-            "scopes": "contacts_read",
+            "scopes": ["contacts_read", "directory_read"],
             "param_name": "people_service",
         },
     ]
