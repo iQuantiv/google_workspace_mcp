@@ -1,11 +1,75 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
+# One grouped update a week (AB#9787): a minor-patch group and a major group, so a week's version
+# bumps arrive as at most two PRs per ecosystem and directory. Nothing here merges on its own.
+#
+# Two blocks per ecosystem and directory, the same shape as dbt-mapping-veristat. Dependabot keys a
+# block on ecosystem, directory and target-branch, so the version block names target-branch: main
+# and the security block names none. A block with a target-branch no longer applies to security
+# updates, and security updates always target the default branch, so the security block
+# (open-pull-requests-limit: 0, no version PRs) is the one that groups security fixes.
+#
+# This replaces the template left by upstream (package-ecosystem: ""), which Dependabot could not run.
+# Qiosk builds its Google Workspace server from this fork, so review grouped PRs before merging.
 version: 2
 updates:
-  - package-ecosystem: "" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  # uv: pyproject.toml and uv.lock (every open Dependabot alert is on uv.lock)
+  - package-ecosystem: uv
+    directory: "/"
+    target-branch: main
     schedule:
-      interval: "weekly"
+      interval: weekly
+    groups:
+      minor-patch:
+        update-types: [minor, patch]
+      major:
+        update-types: [major]
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # docker: Dockerfile base image
+  - package-ecosystem: docker
+    directory: "/"
+    target-branch: main
+    schedule:
+      interval: weekly
+    groups:
+      minor-patch:
+        update-types: [minor, patch]
+      major:
+        update-types: [major]
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # github-actions: .github/workflows
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: main
+    schedule:
+      interval: weekly
+    groups:
+      minor-patch:
+        update-types: [minor, patch]
+      major:
+        update-types: [major]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
